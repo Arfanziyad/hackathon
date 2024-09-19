@@ -1,0 +1,227 @@
+
+import os
+import datetime
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+# If modifying these SCOPES, delete the file token.json.
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def get_credentials():
+    """Get Google Calendar API credentials."""
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+    return creds
+
+def list_upcoming_events(service):
+    """Lists the next 10 events from the primary calendar."""
+    now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+    events_result = (
+        service.events()
+        .list(
+            calendarId='primary',
+            timeMin=now,
+            maxResults=10,
+            singleEvents=True,
+            orderBy='startTime'
+        )
+        .execute()
+    )
+    return events_result.get('items', [])
+
+def get_month_dates(year, month):
+    """Returns the start and end dates of a given month."""
+    start_date = datetime.datetime(year, month, 1)
+    if month == 12:
+        end_date = datetime.datetime(year + 1, 1, 1)  # January of next year
+    else:
+        end_date = datetime.datetime(year, month + 1, 1)  # First day of next month
+    return start_date.isoformat() + 'Z', end_date.isoformat() + 'Z'  # 'Z' indicates UTC time
+
+def create_event(service):
+    """Creates a new event in the user's Google Calendar."""
+    summary = input("Enter the event summary: ")
+    description = input("Enter the event description: ")
+    location = input("Enter the event location: ")
+    
+    start_date_str = input("Enter the start date (DD-MM-YYYY): ")
+    start_hour = int(input("Enter the start hour (0-23): "))
+    start_minute = int(input("Enter the start minute (0-59): "))
+    
+    end_date_str = input("Enter the end date (DD-MM-YYYY): ")
+    end_hour = int(input("Enter the end hour (0-23): "))
+    end_minute = int(input("Enter the end minute (0-59): "))
+
+    # Convert date strings to datetime objects
+    start_date = datetime.datetime.strptime(start_date_str, "%d-%m-%Y")
+    end_date = datetime.datetime.strptime(end_date_str, "%d-%m-%Y")
+    
+    # Combine date and time
+    start_time = start_date.replace(hour=start_hour, minute=start_minute).isoformat() + 'Z'
+    end_time = end_date.replace(hour=end_hour, minute=end_minute).isoformat() + 'Z'
+
+    event = {
+        'summary': summary,
+        'location': location,
+        'description': description,
+        'start': {
+            'dateTime': start_time,
+            'timeZone': 'UTC',  # Change as necessary
+        },
+        'end': {
+            'dateTime': end_time,
+            'timeZone': 'UTC',  # Change as necessary
+        },
+    }
+
+    event = service.events().insert(calendarId='primary', body=event).execute()
+    print(f'Event created: {event.get("htmlLink")}')
+
+def update_event(service):
+    """Updates an existing event in the user's Google Calendar."""
+    events = list_upcoming_events(service)
+
+    if not events:
+        print("No upcoming events found.")
+        return
+
+    print("Upcoming events:")
+    for i, event in enumerate(events):
+        start = event["start"].get("dateTime", event["start"].get("date"))
+        print(f"{i + 1}: {start} - {event['summary']} (ID: {event['id']})")
+
+    event_index = int(input("Enter the event number you want to update: ")) - 1
+    if 0 <= event_index < len(events):
+        event_id = events[event_index]['id']
+        event_to_update = service.events().get(calendarId='primary', eventId=event_id).execute()
+
+        summary = input(f"Enter new summary (current: {event_to_update['summary']}): ") or event_to_update['summary']
+        description = input(f"Enter new description (current: {event_to_update.get('description', 'None')}): ") or event_to_update.get('description', '')
+        location = input(f"Enter new location (current: {event_to_update.get('location', 'None')}): ") or event_to_update.get('location', '')
+        
+        start_time_str = input(f"Enter new start time (current: {event_to_update['start']['dateTime']}) (YYYY-MM-DD HH:MM): ") or event_to_update['start']['dateTime']
+        start_time = datetime.datetime.strptime(start_time_str, "%Y-%m-%d %H:%M").isoformat() + 'Z'
+
+        end_time_str = input(f"Enter new end time (current: {event_to_update['end']['dateTime']}) (YYYY-MM-DD HH:MM): ") or event_to_update['end']['dateTime']
+        end_time = datetime.datetime.strptime(end_time_str, "%Y-%m-%d %H:%M").isoformat() + 'Z'
+
+        updated_event = {
+            'summary': summary,
+            'location': location,
+            'description': description,
+            'start': {
+                'dateTime': start_time,
+                'timeZone': 'UTC',  # Change as necessary
+            },
+            'end': {
+                'dateTime': end_time,
+                'timeZone': 'UTC',  # Change as necessary
+            },
+        }
+
+        service.events().update(calendarId='primary', eventId=event_id, body=updated_event).execute()
+        print("Event updated successfully.")
+    else:
+        print("Invalid event number.")
+
+def delete_event(service):
+    """Deletes an event from the user's Google Calendar."""
+    events = list_upcoming_events(service)
+
+    if not events:
+        print("No upcoming events found.")
+        return
+
+    print("Upcoming events:")
+    for i, event in enumerate(events):
+        start = event["start"].get("dateTime", event["start"].get("date"))
+        print(f"{i + 1}: {start} - {event['summary']} (ID: {event['id']})")
+
+    event_index = int(input("Enter the event number you want to delete: ")) - 1
+    if 0 <= event_index < len(events):
+        event_id = events[event_index]['id']
+        service.events().delete(calendarId='primary', eventId=event_id).execute()
+        print("Event deleted successfully.")
+    else:
+        print("Invalid event number.")
+
+def retrieve_events_in_month(service):
+    """Retrieves all upcoming events for a specific month."""
+    year = int(input("Enter the year (YYYY): "))
+    month = int(input("Enter the month (1-12): "))
+    time_min, time_max = get_month_dates(year, month)
+
+    events = []
+    page_token = None
+    while True:
+        events_result = (
+            service.events()
+            .list(
+                calendarId='primary',
+                timeMin=time_min,
+                timeMax=time_max,
+                pageToken=page_token,
+                singleEvents=True,
+                orderBy='startTime',
+            )
+            .execute()
+        )
+        events.extend(events_result.get('items', []))
+        page_token = events_result.get('nextPageToken')
+        if not page_token:
+            break
+
+    if not events:
+        print("No upcoming events found for this month.")
+        return
+
+    print(f"Upcoming events for {month}/{year}:")
+    for event in events:
+        start = event["start"].get("dateTime", event["start"].get("date"))
+        print(start, event["summary"])
+
+def main():
+    """Main function to provide user options for calendar operations."""
+    creds = get_credentials()
+    service = build("calendar", "v3", credentials=creds)
+
+    while True:
+        print("\nGoogle Calendar Operations:")
+        print("1. Create a new event")
+        print("2. Update an existing event")
+        print("3. Delete an event")
+        print("4. Retrieve upcoming events in a specific month")
+        print("5. Exit")
+
+        choice = input("Enter your choice (1-5): ")
+        
+        if choice == '1':
+            create_event(service)
+        elif choice == '2':
+            update_event(service)
+        elif choice == '3':
+            delete_event(service)
+        elif choice == '4':
+            retrieve_events_in_month(service)
+        elif choice == '5':
+            print("Exiting the program.")
+            break
+        else:
+            print("Invalid choice. Please try again.")
+
+if __name__ == "__main__":
+    main()
